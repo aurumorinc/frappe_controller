@@ -245,8 +245,11 @@ app_license = "mit"
 # 	"Logging DocType Name": 30  # days to retain logs
 # }
 
-# Translation
-# ------------
-# List of apps whose translatable strings should be excluded from this app's translations.
-# ignore_translatable_strings_from = []
+bench_commands = [
+	"frappe_controller.commands.commands"
+]
+
+after_migrate = [
+	"frappe_controller.controller.doctype.controller_job_type.controller_job_type.sync_jobs"
+]
 

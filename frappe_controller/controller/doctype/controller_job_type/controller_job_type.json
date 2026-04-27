@@ -1,0 +1,115 @@
+{
+ "actions": [
+  {
+   "action": "frappe_controller.controller.doctype.controller_job_type.controller_job_type.execute_event",
+   "action_type": "Server Action",
+   "group": "Actions",
+   "label": "Execute"
+  }
+ ],
+ "creation": "2024-02-23 10:41:33.059393",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "stopped",
+  "method",
+  "server_script",
+  "create_log",
+  "rate_limit_section",
+  "max_calls_per_minute",
+  "concurrency_limit",
+  "status_section",
+  "last_execution"
+ ],
+ "fields": [
+  {
+   "fieldname": "method",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Method",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "stopped",
+   "fieldtype": "Check",
+   "label": "Stopped"
+  },
+  {
+   "default": "1",
+   "fieldname": "create_log",
+   "fieldtype": "Check",
+   "label": "Create Log"
+  },
+  {
+   "fieldname": "last_execution",
+   "fieldtype": "Datetime",
+   "label": "Last Execution",
+   "read_only": 1
+  },
+  {
+   "fieldname": "max_calls_per_minute",
+   "fieldtype": "Int",
+   "label": "Max Calls Per Minute"
+  },
+  {
+   "fieldname": "concurrency_limit",
+   "fieldtype": "Int",
+   "label": "Concurrency Limit"
+  },
+  {
+   "fieldname": "server_script",
+   "fieldtype": "Link",
+   "label": "Server Script",
+   "options": "Server Script",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "rate_limit_section",
+   "fieldtype": "Section Break",
+   "label": "Rate Limit"
+  },
+  {
+   "fieldname": "status_section",
+   "fieldtype": "Section Break",
+   "label": "Status"
+  }
+ ],
+ "in_create": 1,
+ "links": [
+  {
+   "link_doctype": "Controller Job Log",
+   "link_fieldname": "controller_job_type"
+  }
+ ],
+ "modified": "2026-04-27 14:32:00.000000",
+ "modified_by": "Administrator",
+ "module": "Controller",
+ "name": "Controller Job Type",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "quick_entry": 1,
+ "row_format": "Dynamic",
+ "show_title_field_in_link": 1,
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "method",
+ "track_changes": 1
+}

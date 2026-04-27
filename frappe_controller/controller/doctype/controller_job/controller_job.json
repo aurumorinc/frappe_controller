@@ -1,0 +1,169 @@
+{
+ "actions": [],
+ "allow_copy": 1,
+ "creation": "2023-03-22 20:05:22.962044",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "job_info_section",
+  "job_id",
+  "job_type",
+  "job_name",
+  "queue",
+  "timeout",
+  "column_break_5",
+  "arguments",
+  "job_status_section",
+  "status",
+  "time_taken",
+  "column_break_11",
+  "started_at",
+  "ended_at",
+  "exception_section",
+  "exc_info"
+ ],
+ "fields": [
+  {
+   "fieldname": "queue",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Queue",
+   "options": "default\nshort\nlong"
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Queued\nStarted\nFinished\nFailed\nCanceled"
+  },
+  {
+   "fieldname": "job_id",
+   "fieldtype": "Data",
+   "label": "Job ID",
+   "read_only": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "exc_info",
+   "fieldtype": "Code",
+   "label": "Exception",
+   "read_only": 1
+  },
+  {
+   "fieldname": "job_name",
+   "fieldtype": "Data",
+   "label": "Job Name",
+   "read_only": 1
+  },
+  {
+   "fieldname": "arguments",
+   "fieldtype": "Code",
+   "label": "Arguments",
+   "read_only": 1
+  },
+  {
+   "fieldname": "timeout",
+   "fieldtype": "Duration",
+   "label": "Timeout"
+  },
+  {
+   "fieldname": "time_taken",
+   "fieldtype": "Duration",
+   "label": "Time Taken",
+   "read_only": 1
+  },
+  {
+   "fieldname": "started_at",
+   "fieldtype": "Datetime",
+   "label": "Started At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "ended_at",
+   "fieldtype": "Datetime",
+   "label": "Ended At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "job_info_section",
+   "fieldtype": "Section Break",
+   "label": "Job Info"
+  },
+  {
+   "fieldname": "job_status_section",
+   "fieldtype": "Section Break",
+   "label": "Job Status"
+  },
+  {
+   "fieldname": "column_break_5",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "column_break_11",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "exception_section",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "job_type",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Job Type",
+   "options": "Controller Job Type",
+   "reqd": 1
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-04-27 18:07:00.000000",
+ "modified_by": "Administrator",
+ "module": "Controller",
+ "name": "Controller Job",
+ "naming_rule": "Random",
+ "autoname": "hash",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [
+  {
+   "color": "Yellow",
+   "title": "Queued"
+  },
+  {
+   "color": "Blue",
+   "title": "Started"
+  },
+  {
+   "color": "Red",
+   "title": "Failed"
+  },
+  {
+   "color": "Green",
+   "title": "Finished"
+  },
+  {
+   "color": "Orange",
+   "title": "Canceled"
+  }
+ ]
+}
