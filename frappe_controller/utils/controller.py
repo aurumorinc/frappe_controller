@@ -62,6 +62,7 @@ def enqueue_jobs_for_site(site: str):
 		if frappe.local.conf.maintenance_mode or frappe.local.conf.pause_controller:
 			return
 
+		cleanup_zombie_jobs()
 		enqueue_jobs()
 
 	except Exception as e:
@@ -69,20 +70,76 @@ def enqueue_jobs_for_site(site: str):
 	finally:
 		frappe.destroy()
 
+def cleanup_zombie_jobs():
+	"""
+	Find jobs stuck in 'Started' state longer than timeout + 60s and mark them as Failed.
+	"""
+	if not frappe.db.exists("DocType", "Controller Job"):
+		return
+		
+	try:
+		# First, find the zombies to create logs for them
+		select_query = """
+			SELECT j.name, j.job_type, t.create_log
+			FROM `tabController Job` j
+			LEFT JOIN `tabController Job Type` t ON j.job_type = t.name
+			WHERE j.status = 'Started'
+			AND j.started_at < DATE_SUB(%s, INTERVAL (COALESCE(j.timeout, t.timeout, 3600) + 60) SECOND)
+		"""
+		zombies = frappe.db.sql(select_query, (now_datetime(),), as_dict=True)
+		
+		for zombie in zombies:
+			if zombie.create_log:
+				create_job_log(
+					job_type=zombie.job_type,
+					status="Failed",
+					details="Worker crashed or job exceeded absolute timeout."
+				)
+
+		if zombies:
+			timeout_query = """
+				UPDATE `tabController Job` j
+				LEFT JOIN `tabController Job Type` t ON j.job_type = t.name
+				SET j.status = 'Failed', j.exc_info = 'Worker crashed or job exceeded absolute timeout.'
+				WHERE j.status = 'Started'
+				AND j.started_at < DATE_SUB(%s, INTERVAL (COALESCE(j.timeout, t.timeout, 3600) + 60) SECOND)
+			"""
+			frappe.db.sql(timeout_query, (now_datetime(),))
+			frappe.db.commit()
+	except Exception:
+		pass
+
 def enqueue_jobs():
 	"""
 	The Hatchet-style Dispatcher.
 	Pulls Queued Controller Jobs from DB and pushes them to Redis workers.
 	"""
-	# Get all active job types
-	job_types = frappe.get_all("Controller Job Type", filters={"stopped": 0}, fields=["*"])
+	if not frappe.db.exists("DocType", "Controller Job"):
+		return
+		
+	try:
+		# Get all active job types
+		job_types = frappe.get_all("Controller Job Type", filters={"stopped": 0}, fields=["*"])
+	except Exception:
+		return
 	
+	if not job_types:
+		return
+
+	# Consolidate Queries: Get all started counts in one query
+	running_counts_data = frappe.db.sql("""
+		SELECT job_type, COUNT(name) as count 
+		FROM `tabController Job` 
+		WHERE status = 'Started' 
+		GROUP BY job_type
+	""", as_dict=True)
+	running_counts = {row.job_type: row.count for row in running_counts_data}
+	
+	jobs_to_update = []
+
 	for jt in job_types:
 		# Check concurrency limit
-		running_count = frappe.db.count("Controller Job", {
-			"job_type": jt.name, 
-			"status": "Started"
-		})
+		running_count = running_counts.get(jt.name, 0)
 		concurrency_limit = jt.concurrency_limit or 1
 		
 		if running_count >= concurrency_limit:
@@ -100,28 +157,37 @@ def enqueue_jobs():
 		if not queued_tasks:
 			continue
 
-		jt_doc = frappe.get_doc("Controller Job Type", jt.name)
-
 		for task in queued_tasks:
 			# Check rate limit (calls per minute)
+			# Note: The 'jt' dict has all the fields from the DB, but methods require a doc.
+			# We instantiate the doc only if we need to run its method.
+			jt_doc = frappe.get_doc("Controller Job Type", jt.name)
 			if not jt_doc.is_allowed_by_rate_limit():
 				break
 				
 			# Dispatch to real background worker
-			frappe.enqueue(
+			rq_job = frappe.enqueue(
 				method="frappe_controller.utils.controller.run_job",
 				queue=task.queue or "default",
-				timeout=task.timeout,
+				timeout=task.timeout or jt_doc.timeout or 3600,
 				is_async=True,
 				task_name=task.name
 			)
 			
-			# Mark as Started in DB
-			frappe.db.set_value("Controller Job", task.name, {
-				"status": "Started",
-				"started_at": now_datetime()
-			}, update_modified=False)
+			jobs_to_update.append((
+				now_datetime(), 
+				rq_job.id if rq_job else None, 
+				task.name
+			))
 			
+	# Batch Database Updates
+	if jobs_to_update:
+		for job_data in jobs_to_update:
+			frappe.db.sql("""
+				UPDATE `tabController Job`
+				SET status = 'Started', started_at = %s, job_id = %s
+				WHERE name = %s
+			""", values=job_data)
 		frappe.db.commit()
 
 def run_job(task_name):
@@ -158,4 +224,41 @@ def run_job(task_name):
             job.time_taken = (job.ended_at - job.started_at).total_seconds()
         
         job.save(ignore_permissions=True)
+        
+        # Log generation
+        try:
+            create_log = frappe.db.get_value("Controller Job Type", job.job_type, "create_log")
+            if create_log:
+                status_map = {"Finished": "Complete", "Failed": "Failed"}
+                details = job.exc_info if job.status == "Failed" else f"Job executed successfully in {job.time_taken or 0} seconds"
+                create_job_log(
+                    job_type=job.job_type,
+                    status=status_map.get(job.status, "Complete"),
+                    details=details
+                )
+        except Exception:
+            frappe.logger("controller").error(f"Failed to create Controller Job Log for {job.name}", exc_info=True)
+            
         frappe.db.commit()
+
+def create_job_log(job_type: str, status: str, details: str = None):
+	"""Helper function to insert a Controller Job Log"""
+	log = frappe.new_doc("Controller Job Log")
+	log.controller_job_type = job_type
+	log.status = status
+	log.details = details
+	log.insert(ignore_permissions=True)
+
+def clear_old_logs():
+	"""
+	Deletes Controller Job Logs that are older than 30 days.
+	Intended to be run via daily scheduler event.
+	"""
+	try:
+		frappe.db.sql("""
+			DELETE FROM `tabController Job Log`
+			WHERE creation < DATE_SUB(NOW(), INTERVAL 30 DAY)
+		""")
+		frappe.db.commit()
+	except Exception:
+		frappe.logger("controller").error("Failed to clean up old Controller Job Logs", exc_info=True)
