@@ -78,15 +78,34 @@ def cleanup_zombie_jobs():
 		return
 		
 	try:
-		timeout_query = """
-			UPDATE `tabController Job` j
+		# First, find the zombies to create logs for them
+		select_query = """
+			SELECT j.name, j.job_type, t.create_log
+			FROM `tabController Job` j
 			LEFT JOIN `tabController Job Type` t ON j.job_type = t.name
-			SET j.status = 'Failed', j.exc_info = 'Worker crashed or job exceeded absolute timeout.'
 			WHERE j.status = 'Started'
 			AND j.started_at < DATE_SUB(%s, INTERVAL (COALESCE(j.timeout, t.timeout, 3600) + 60) SECOND)
 		"""
-		frappe.db.sql(timeout_query, (now_datetime(),))
-		frappe.db.commit()
+		zombies = frappe.db.sql(select_query, (now_datetime(),), as_dict=True)
+		
+		for zombie in zombies:
+			if zombie.create_log:
+				create_job_log(
+					job_type=zombie.job_type,
+					status="Failed",
+					details="Worker crashed or job exceeded absolute timeout."
+				)
+
+		if zombies:
+			timeout_query = """
+				UPDATE `tabController Job` j
+				LEFT JOIN `tabController Job Type` t ON j.job_type = t.name
+				SET j.status = 'Failed', j.exc_info = 'Worker crashed or job exceeded absolute timeout.'
+				WHERE j.status = 'Started'
+				AND j.started_at < DATE_SUB(%s, INTERVAL (COALESCE(j.timeout, t.timeout, 3600) + 60) SECOND)
+			"""
+			frappe.db.sql(timeout_query, (now_datetime(),))
+			frappe.db.commit()
 	except Exception:
 		pass
 
@@ -205,4 +224,41 @@ def run_job(task_name):
             job.time_taken = (job.ended_at - job.started_at).total_seconds()
         
         job.save(ignore_permissions=True)
+        
+        # Log generation
+        try:
+            create_log = frappe.db.get_value("Controller Job Type", job.job_type, "create_log")
+            if create_log:
+                status_map = {"Finished": "Complete", "Failed": "Failed"}
+                details = job.exc_info if job.status == "Failed" else f"Job executed successfully in {job.time_taken or 0} seconds"
+                create_job_log(
+                    job_type=job.job_type,
+                    status=status_map.get(job.status, "Complete"),
+                    details=details
+                )
+        except Exception:
+            frappe.logger("controller").error(f"Failed to create Controller Job Log for {job.name}", exc_info=True)
+            
         frappe.db.commit()
+
+def create_job_log(job_type: str, status: str, details: str = None):
+	"""Helper function to insert a Controller Job Log"""
+	log = frappe.new_doc("Controller Job Log")
+	log.controller_job_type = job_type
+	log.status = status
+	log.details = details
+	log.insert(ignore_permissions=True)
+
+def clear_old_logs():
+	"""
+	Deletes Controller Job Logs that are older than 30 days.
+	Intended to be run via daily scheduler event.
+	"""
+	try:
+		frappe.db.sql("""
+			DELETE FROM `tabController Job Log`
+			WHERE creation < DATE_SUB(NOW(), INTERVAL 30 DAY)
+		""")
+		frappe.db.commit()
+	except Exception:
+		frappe.logger("controller").error("Failed to clean up old Controller Job Logs", exc_info=True)

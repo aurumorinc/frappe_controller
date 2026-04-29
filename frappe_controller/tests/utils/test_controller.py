@@ -15,6 +15,7 @@ class TestControllerDaemon(IntegrationTestCase):
 		frappe.db.rollback()
 		frappe.db.truncate("Controller Job Type")
 		frappe.db.truncate("Controller Job")
+		frappe.db.truncate("Controller Job Log")
 		
 		# Create a job type for testing
 		self.job_type = frappe.get_doc({
@@ -81,6 +82,11 @@ class TestControllerDaemon(IntegrationTestCase):
 		self.assertEqual(job.status, "Finished")
 		self.assertIsNotNone(job.ended_at)
 		self.assertGreaterEqual(job.time_taken, 0)
+		
+		# Verify log creation for successful job
+		logs = frappe.get_all("Controller Job Log", filters={"controller_job_type": job.job_type, "status": "Complete"})
+		self.assertGreaterEqual(len(logs), 1)
+		self.assertIn("successfully", frappe.db.get_value("Controller Job Log", logs[0].name, "details"))
 
 	def test_run_job_wrapper_handles_failure(self):
 		# Enqueue a non-existent method to force failure
@@ -97,6 +103,30 @@ class TestControllerDaemon(IntegrationTestCase):
 		self.assertEqual(job.status, "Failed")
 		self.assertIsNotNone(job.exc_info)
 		self.assertTrue("Error" in job.exc_info or "AttributeError" in job.exc_info)
+		
+		# Verify log creation for failed job
+		logs = frappe.get_all("Controller Job Log", filters={"controller_job_type": job.job_type, "status": "Failed"})
+		self.assertGreaterEqual(len(logs), 1)
+		self.assertTrue("AttributeError" in frappe.db.get_value("Controller Job Log", logs[0].name, "details") or "Error" in frappe.db.get_value("Controller Job Log", logs[0].name, "details"))
+
+	def test_opt_out_logging(self):
+		# Set create_log to 0
+		frappe.db.set_value("Controller Job Type", self.job_type.name, "create_log", 0)
+		
+		job_name = enqueue("frappe.ping")
+		frappe.db.set_value("Controller Job", job_name, {
+			"status": "Started",
+			"started_at": now_datetime()
+		})
+		frappe.db.commit()
+
+		run_job(job_name)
+		
+		# Assert 0 logs generated for this execution cycle
+		logs = frappe.get_all("Controller Job Log", filters={"controller_job_type": self.job_type.name})
+		self.assertEqual(len(logs), 0)
+		
+		frappe.db.set_value("Controller Job Type", self.job_type.name, "create_log", 1) # reset
 
 	def test_cleanup_zombie_jobs(self):
 		# 1. Healthy Job (started 10 seconds ago, timeout is 60s)
@@ -130,6 +160,11 @@ class TestControllerDaemon(IntegrationTestCase):
 		self.assertEqual(frappe.db.get_value("Controller Job", job1_name, "status"), "Started")
 		self.assertEqual(frappe.db.get_value("Controller Job", job2_name, "status"), "Failed")
 		self.assertEqual(frappe.db.get_value("Controller Job", job3_name, "status"), "Failed")
+
+		# Test Zombie Job Log generation
+		logs = frappe.get_all("Controller Job Log", filters={"controller_job_type": self.job_type.name, "status": "Failed"})
+		self.assertGreaterEqual(len(logs), 2)
+		self.assertIn("Worker crashed", frappe.db.get_value("Controller Job Log", logs[0].name, "details"))
 
 	def test_consolidate_queries_and_batch_update_efficiency(self):
 		frappe.db.truncate("Controller Job")
