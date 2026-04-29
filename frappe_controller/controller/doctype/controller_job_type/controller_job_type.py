@@ -107,16 +107,32 @@ def insert_single_event(method: str, config: dict = None):
 		doc.stopped = 0
 		doc.create_log = 1
 
+	# Helper to unpack frappe.get_hooks list wrapping
+	def get_val(key):
+		val = config.get(key)
+		if isinstance(val, list) and len(val) > 0:
+			return val[-1] # Get the last hook value
+		return val
+
 	# Safely update numeric fields
-	if config.get("max_calls_per_minute") is not None:
+	max_calls = get_val("max_calls_per_minute")
+	if max_calls is not None:
 		try:
-			doc.max_calls_per_minute = int(config.get("max_calls_per_minute"))
+			doc.max_calls_per_minute = int(max_calls)
 		except (ValueError, TypeError):
 			pass
 			
-	if config.get("concurrency_limit") is not None:
+	concurrency = get_val("concurrency_limit")
+	if concurrency is not None:
 		try:
-			doc.concurrency_limit = int(config.get("concurrency_limit"))
+			doc.concurrency_limit = int(concurrency)
+		except (ValueError, TypeError):
+			pass
+
+	timeout = get_val("timeout")
+	if timeout is not None:
+		try:
+			doc.timeout = int(timeout)
 		except (ValueError, TypeError):
 			pass
 	
