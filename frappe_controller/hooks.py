@@ -143,23 +143,12 @@ app_license = "mit"
 # Scheduled Tasks
 # ---------------
 
-# scheduler_events = {
-# 	"all": [
-# 		"frappe_controller.tasks.all"
-# 	],
-# 	"daily": [
-# 		"frappe_controller.tasks.daily"
-# 	],
-# 	"hourly": [
-# 		"frappe_controller.tasks.hourly"
-# 	],
-# 	"weekly": [
-# 		"frappe_controller.tasks.weekly"
-# 	],
-# 	"monthly": [
-# 		"frappe_controller.tasks.monthly"
-# 	],
-# }
+scheduler_events = {
+	"daily": [
+		"frappe_controller.utils.controller.clear_old_logs"
+	]
+}
+
 
 # Testing
 # -------
