@@ -20,6 +20,7 @@
   "timeout",
   "status_section",
   "last_execution",
+  "rate_limit_per_second",
   "rate_limit_per_minute",
   "rate_limit_per_hour",
   "rate_limit_per_day"
@@ -89,6 +90,11 @@
    "fieldtype": "Int",
    "label": "Timeout (Seconds)",
    "default": "3600"
+  },
+  {
+   "fieldname": "rate_limit_per_second",
+   "fieldtype": "Int",
+   "label": "Rate Limit Per Second"
   }
  ],
  "in_create": 1,

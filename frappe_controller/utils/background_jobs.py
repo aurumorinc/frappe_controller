@@ -108,18 +108,23 @@ def start_worker(queue="default"):
         end
         
         local keys = {
+            sec = "fs:" .. method .. ":rate:1s",
             min = "fs:" .. method .. ":rate:1m",
             hour = "fs:" .. method .. ":rate:1h",
             day = "fs:" .. method .. ":rate:1d"
         }
         
         local windows = {
+            sec = 1,
             min = 60,
             hour = 3600,
             day = 86400
         }
         
         -- Check all limits first
+        if config['rate_limit_per_second'] and tonumber(redis.call('GET', keys.sec) or 0) >= config['rate_limit_per_second'] then
+            return current_time + windows.sec
+        end
         if config['rate_limit_per_minute'] and tonumber(redis.call('GET', keys.min) or 0) >= config['rate_limit_per_minute'] then
             return current_time + windows.min
         end
@@ -131,6 +136,10 @@ def start_worker(queue="default"):
         end
         
         -- If allowed, increment
+        if config['rate_limit_per_second'] then
+            local count = redis.call('INCR', keys.sec)
+            if count == 1 then redis.call('EXPIRE', keys.sec, windows.sec) end
+        end
         if config['rate_limit_per_minute'] then
             local count = redis.call('INCR', keys.min)
             if count == 1 then redis.call('EXPIRE', keys.min, windows.min) end

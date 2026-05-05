@@ -20,6 +20,7 @@ class ControllerJobType(Document):
 		method: DF.Data
 		server_script: DF.Link | None
 		stopped: DF.Check
+		rate_limit_per_second: DF.Int
 		rate_limit_per_minute: DF.Int
 		rate_limit_per_hour: DF.Int
 		rate_limit_per_day: DF.Int
@@ -33,6 +34,8 @@ class ControllerJobType(Document):
 		cache.delete_value(key)
 		
 		limits = {}
+		if self.rate_limit_per_second:
+			limits["rate_limit_per_second"] = str(self.rate_limit_per_second)
 		if self.rate_limit_per_minute:
 			limits["rate_limit_per_minute"] = str(self.rate_limit_per_minute)
 		if self.rate_limit_per_hour:
@@ -117,6 +120,13 @@ def insert_single_event(method: str, config: dict = None):
 		return val
 
 	# Safely update numeric fields
+	rate_limit_per_second = get_val("rate_limit_per_second")
+	if rate_limit_per_second is not None:
+		try:
+			doc.rate_limit_per_second = int(rate_limit_per_second)
+		except (ValueError, TypeError):
+			pass
+			
 	rate_limit_per_minute = get_val("rate_limit_per_minute")
 	if rate_limit_per_minute is not None:
 		try:
