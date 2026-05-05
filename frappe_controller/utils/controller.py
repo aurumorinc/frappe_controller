@@ -50,7 +50,6 @@ def start_controller() -> NoReturn:
 
 	while True:
 		try:
-			frappe.logger("controller").debug("Waiting for telemetry messages...")
 			messages = cache.xreadgroup(
 				"telemetry_consumer_group",
 				"consumer-1",
