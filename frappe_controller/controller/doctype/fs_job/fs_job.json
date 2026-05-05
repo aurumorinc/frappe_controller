@@ -11,7 +11,6 @@
   "job_type",
   "job_name",
   "queue",
-  "timeout",
   "column_break_5",
   "arguments",
   "job_status_section",
@@ -30,7 +29,7 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Queue",
-   "options": "default\nshort\nlong"
+   "options": "low\nmedium\nhigh"
   },
   {
    "fieldname": "status",
@@ -64,11 +63,6 @@
    "fieldtype": "Code",
    "label": "Arguments",
    "read_only": 1
-  },
-  {
-   "fieldname": "timeout",
-   "fieldtype": "Duration",
-   "label": "Timeout"
   },
   {
    "fieldname": "time_taken",
@@ -124,7 +118,7 @@
  "modified": "2026-04-27 18:07:00.000000",
  "modified_by": "Administrator",
  "module": "Controller",
- "name": "Controller Job",
+ "name": "FS Job",
  "naming_rule": "Random",
  "autoname": "hash",
  "owner": "Administrator",

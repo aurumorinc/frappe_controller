@@ -146,6 +146,9 @@ app_license = "mit"
 scheduler_events = {
 	"daily": [
 		"frappe_controller.utils.controller.clear_old_logs"
+	],
+	"all": [
+		"frappe_controller.utils.controller.sweep_lost_jobs"
 	]
 }
 
