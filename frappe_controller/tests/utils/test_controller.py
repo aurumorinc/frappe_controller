@@ -44,7 +44,13 @@ class TestControllerJob(IntegrationTestCase):
 		}).insert()
 		
 		# check redis
-		limits = frappe.cache().hgetall("fs:frappe_controller.tests.utils.test_controller.dummy_sync:config")
+		key = "fs:frappe_controller.tests.utils.test_controller.dummy_sync:config"
+		raw_limits = frappe.cache().execute_command("HGETALL", key)
+		# Convert list [k1, v1, k2, v2] to dict
+		limits = {}
+		if raw_limits:
+			for i in range(0, len(raw_limits), 2):
+				limits[raw_limits[i]] = raw_limits[i+1]
 		
 		val = limits.get(b"rate_limit_per_minute") or limits.get("rate_limit_per_minute")
 		if isinstance(val, bytes):
