@@ -31,7 +31,7 @@ class ControllerJobType(Document):
 		key = f"fs:{self.method}:config"
 		
 		# Clear existing config
-		cache.delete_value(key)
+		cache.delete_value(key, shared=True)
 		
 		limits = {}
 		if self.rate_limit_per_second:
@@ -46,7 +46,7 @@ class ControllerJobType(Document):
 			limits["timeout"] = str(self.timeout)
 			
 		for k, v in limits.items():
-			cache.hset(key, k, v)
+			cache.hset(key, k, v, shared=True)
 
 def sync_jobs(hooks: list | dict = None):
 	frappe.reload_doc("controller", "doctype", "controller_job_type")
