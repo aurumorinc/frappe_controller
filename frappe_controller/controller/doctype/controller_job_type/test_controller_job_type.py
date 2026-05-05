@@ -9,12 +9,12 @@ class TestControllerJobType(IntegrationTestCase):
 	def setUp(self):
 		frappe.db.rollback()
 		frappe.db.truncate("Controller Job Type")
-		frappe.db.truncate("Controller Job")
+		frappe.db.truncate("FS Job")
 
 	def test_sync_jobs_from_hooks(self):
 		test_hooks = {
-			"method.one": {"max_calls_per_minute": 10},
-			"method.two": {"concurrency_limit": 2}
+			"method.one": {"rate_limit_per_minute": 10},
+			"method.two": {"rate_limit_per_hour": 2}
 		}
 		
 		sync_jobs(hooks=test_hooks)
@@ -23,7 +23,7 @@ class TestControllerJobType(IntegrationTestCase):
 		self.assertTrue(frappe.db.exists("Controller Job Type", {"method": "method.two"}))
 
 		job1 = frappe.get_doc("Controller Job Type", {"method": "method.one"})
-		self.assertEqual(job1.max_calls_per_minute, 10)
+		self.assertEqual(job1.rate_limit_per_minute, 10)
 
 		# Test cleanup of orphaned jobs
 		sync_jobs(hooks={"method.one": {}})
@@ -31,22 +31,3 @@ class TestControllerJobType(IntegrationTestCase):
 		# They are stopped, not deleted
 		job2 = frappe.get_doc("Controller Job Type", {"method": "method.two"})
 		self.assertEqual(job2.stopped, 1)
-
-	def test_rate_limiting_logic(self):
-		job = frappe.get_doc({
-			"doctype": "Controller Job Type",
-			"method": "test.rate.limit",
-			"max_calls_per_minute": 2,
-			"stopped": 0
-		}).insert()
-
-		# Ensure cache is clean
-		cache_key = f"controller_job_rate_limit:{job.name}"
-		frappe.cache().delete(cache_key)
-
-		# First two calls should be allowed
-		self.assertTrue(job.is_allowed_by_rate_limit())
-		self.assertTrue(job.is_allowed_by_rate_limit())
-
-		# Third call should be blocked
-		self.assertFalse(job.is_allowed_by_rate_limit())

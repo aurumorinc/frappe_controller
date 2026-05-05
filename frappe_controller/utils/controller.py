@@ -9,15 +9,15 @@ from typing import NoReturn
 from filelock import FileLock, Timeout
 
 import frappe
-from frappe.utils import get_bench_path, get_sites, now_datetime
+from frappe.utils import get_bench_path, get_sites, now_datetime, cint
 from frappe.utils.background_jobs import set_niceness
 
-DEFAULT_CONTROLLER_TICK = 1
 
 def start_controller() -> NoReturn:
-	"""Run enqueue_jobs_for_all_sites based on controller tick."""
-
-	tick = DEFAULT_CONTROLLER_TICK
+	"""
+	Telemetry Consumer.
+	Reads from 'controller:telemetry' Redis stream and updates MariaDB.
+	"""
 	set_niceness()
 
 	lock_path = _get_controller_lock_file()
@@ -29,217 +29,147 @@ def start_controller() -> NoReturn:
 		frappe.logger("controller").debug("Controller already running")
 		return
 
-	while True:
-		# Use a precise sleep to maintain 1s tick
-		start_time = time.time()
-		enqueue_jobs_for_all_sites()
-		elapsed = time.time() - start_time
-		sleep_time = max(0.1, tick - elapsed)
-		time.sleep(sleep_time)
-
-def _get_controller_lock_file():
-	return os.path.abspath(os.path.join(get_bench_path(), "config", "controller_process"))
-
-def enqueue_jobs_for_all_sites():
-	"""Loop through sites and enqueue controller jobs"""
-
-	with frappe.init_site():
-		sites = get_sites()
-
-	random.shuffle(sites)
-
-	for site in sites:
-		try:
-			enqueue_jobs_for_site(site=site)
-		except Exception:
-			frappe.logger("controller").debug(f"Failed to enqueue jobs for site: {site}", exc_info=True)
-
-def enqueue_jobs_for_site(site: str):
-	try:
-		frappe.init(site)
-		frappe.connect()
-		
-		if frappe.local.conf.maintenance_mode or frappe.local.conf.pause_controller:
-			return
-
-		cleanup_zombie_jobs()
-		enqueue_jobs()
-
-	except Exception as e:
-		frappe.logger("controller").error(f"Exception in Enqueue Jobs for Site {site}", exc_info=True)
-	finally:
-		frappe.destroy()
-
-def cleanup_zombie_jobs():
-	"""
-	Find jobs stuck in 'Started' state longer than timeout + 60s and mark them as Failed.
-	"""
-	if not frappe.db.exists("DocType", "Controller Job"):
+	# Setup site connection for background job
+	sites = get_sites()
+	if not sites:
 		return
-		
+	site = sites[0]
+	
+	frappe.init(site)
+	frappe.connect()
+	
+	cache = frappe.cache()
 	try:
-		# First, find the zombies to create logs for them
-		select_query = """
-			SELECT j.name, j.job_type, t.create_log
-			FROM `tabController Job` j
-			LEFT JOIN `tabController Job Type` t ON j.job_type = t.name
-			WHERE j.status = 'Started'
-			AND j.started_at < DATE_SUB(%s, INTERVAL (COALESCE(j.timeout, t.timeout, 3600) + 60) SECOND)
-		"""
-		zombies = frappe.db.sql(select_query, (now_datetime(),), as_dict=True)
-		
-		for zombie in zombies:
-			if zombie.create_log:
-				create_job_log(
-					job_type=zombie.job_type,
-					status="Failed",
-					details="Worker crashed or job exceeded absolute timeout."
-				)
-
-		if zombies:
-			timeout_query = """
-				UPDATE `tabController Job` j
-				LEFT JOIN `tabController Job Type` t ON j.job_type = t.name
-				SET j.status = 'Failed', j.exc_info = 'Worker crashed or job exceeded absolute timeout.'
-				WHERE j.status = 'Started'
-				AND j.started_at < DATE_SUB(%s, INTERVAL (COALESCE(j.timeout, t.timeout, 3600) + 60) SECOND)
-			"""
-			frappe.db.sql(timeout_query, (now_datetime(),))
-			frappe.db.commit()
+		for stream in ["fs:finished:low", "fs:failed:low", "fs:finished:medium", "fs:failed:medium", "fs:finished:high", "fs:failed:high"]:
+			try:
+				cache.xgroup_create(stream, "telemetry_consumer_group", id="0", mkstream=True)
+			except Exception:
+				pass
 	except Exception:
 		pass
 
-def enqueue_jobs():
-	"""
-	The Hatchet-style Dispatcher.
-	Pulls Queued Controller Jobs from DB and pushes them to Redis workers.
-	"""
-	if not frappe.db.exists("DocType", "Controller Job"):
-		return
-		
-	try:
-		# Get all active job types
-		job_types = frappe.get_all("Controller Job Type", filters={"stopped": 0}, fields=["*"])
-	except Exception:
-		return
-	
-	if not job_types:
-		return
-
-	# Consolidate Queries: Get all started counts in one query
-	running_counts_data = frappe.db.sql("""
-		SELECT job_type, COUNT(name) as count 
-		FROM `tabController Job` 
-		WHERE status = 'Started' 
-		GROUP BY job_type
-	""", as_dict=True)
-	running_counts = {row.job_type: row.count for row in running_counts_data}
-	
-	jobs_to_update = []
-
-	for jt in job_types:
-		# Check concurrency limit
-		running_count = running_counts.get(jt.name, 0)
-		concurrency_limit = jt.concurrency_limit or 1
-		
-		if running_count >= concurrency_limit:
-			continue
-			
-		slots = concurrency_limit - running_count
-		
-		# Pull Queued tasks from DB
-		queued_tasks = frappe.get_all("Controller Job", filters={
-			"job_type": jt.name,
-			"status": "Queued"
-		}, fields=["name", "job_name", "arguments", "queue", "timeout"], 
-		order_by="creation ASC", limit=slots)
-		
-		if not queued_tasks:
-			continue
-
-		for task in queued_tasks:
-			# Check rate limit (calls per minute)
-			# Note: The 'jt' dict has all the fields from the DB, but methods require a doc.
-			# We instantiate the doc only if we need to run its method.
-			jt_doc = frappe.get_doc("Controller Job Type", jt.name)
-			if not jt_doc.is_allowed_by_rate_limit():
-				break
-				
-			# Dispatch to real background worker
-			rq_job = frappe.enqueue(
-				method="frappe_controller.utils.controller.run_job",
-				queue=task.queue or "default",
-				timeout=task.timeout or jt_doc.timeout or 3600,
-				is_async=True,
-				task_name=task.name
+	while True:
+		try:
+			messages = cache.xreadgroup(
+				"telemetry_consumer_group",
+				"consumer-1",
+				{
+					"fs:finished:low": ">", "fs:failed:low": ">",
+					"fs:finished:medium": ">", "fs:failed:medium": ">",
+					"fs:finished:high": ">", "fs:failed:high": ">"
+				},
+				count=500,
+				block=5000
 			)
-			
-			jobs_to_update.append((
-				now_datetime(), 
-				rq_job.id if rq_job else None, 
-				task.name
-			))
-			
-	# Batch Database Updates
-	if jobs_to_update:
-		for job_data in jobs_to_update:
-			frappe.db.sql("""
-				UPDATE `tabController Job`
-				SET status = 'Started', started_at = %s, job_id = %s
-				WHERE name = %s
-			""", values=job_data)
-		frappe.db.commit()
 
-def run_job(task_name):
-    """
-    Wrapper function that runs in the standard RQ worker.
-    It executes the payload and updates the Controller Job status.
-    """
-    if not frappe.db.exists("Controller Job", task_name):
-        return
+			if not messages:
+				continue
+				
+			stream_msg_ids = {}
+			for stream_name, stream_messages in messages:
+				if isinstance(stream_name, bytes):
+					stream_name = stream_name.decode("utf-8")
+				if stream_name not in stream_msg_ids:
+					stream_msg_ids[stream_name] = []
+				for msg_id, payload in stream_messages:
+					stream_msg_ids[stream_name].append(msg_id)
+					if b"payload" in payload:
+						try:
+							payload_data = json.loads(payload[b"payload"])
+							payload = payload_data
+						except Exception:
+							pass
+					elif "payload" in payload:
+						try:
+							payload_data = json.loads(payload["payload"])
+							payload = payload_data
+						except Exception:
+							pass
+							
+					job_id = payload.get("job_id")
+					status = payload.get("status")
+					error = payload.get("error")
+					job_site = payload.get("site")
+					
+					# Ensure payload strings are parsed correctly if they are bytes
+					if isinstance(job_id, bytes): job_id = job_id.decode('utf-8')
+					if isinstance(status, bytes): status = status.decode('utf-8')
+					if isinstance(error, bytes): error = error.decode('utf-8')
+					if isinstance(job_site, bytes): job_site = job_site.decode('utf-8')
 
-    job = frappe.get_doc("Controller Job", task_name)
-    
-    try:
-        # 1. Prepare execution
-        method_path = job.job_name
-        args = json.loads(job.arguments) if job.arguments else {}
-        
-        # 2. Execute target function
-        frappe.get_attr(method_path)(**args)
-        
-        # 3. Success
-        job.status = "Finished"
-        
-    except Exception:
-        # 4. Failure
-        frappe.db.rollback()
-        job.status = "Failed"
-        job.exc_info = frappe.get_traceback()
-        
-    finally:
-        # 5. Cleanup and State sync
-        job.ended_at = now_datetime()
-        if job.started_at:
-            job.time_taken = (job.ended_at - job.started_at).total_seconds()
-        
-        job.save(ignore_permissions=True)
-        
-        # Log generation
-        try:
-            create_log = frappe.db.get_value("Controller Job Type", job.job_type, "create_log")
-            if create_log:
-                status_map = {"Finished": "Complete", "Failed": "Failed"}
-                details = job.exc_info if job.status == "Failed" else f"Job executed successfully in {job.time_taken or 0} seconds"
-                create_job_log(
-                    job_type=job.job_type,
-                    status=status_map.get(job.status, "Complete"),
-                    details=details
-                )
-        except Exception:
-            frappe.logger("controller").error(f"Failed to create Controller Job Log for {job.name}", exc_info=True)
-            
-        frappe.db.commit()
+					if not job_id:
+						continue
+						
+					# Single db connection handles it
+					if job_site and getattr(frappe.local, "site", None) != job_site:
+						frappe.init(site=job_site, force=True)
+						frappe.connect()
+						
+					frappe.db.sql("""
+						UPDATE `tabFS Job`
+						SET status = %s, exc_info = %s, ended_at = %s
+						WHERE name = %s
+					""", (status, error, now_datetime(), job_id))
+					
+					# Check if job type wants log
+					job_type_name = frappe.db.get_value("FS Job", job_id, "job_type")
+					if job_type_name and frappe.db.get_value("Controller Job Type", job_type_name, "create_log"):
+						log = frappe.new_doc("Controller Job Log")
+						log.controller_job_type = job_type_name
+						log.status = "Failed" if status == "Failed" else "Complete"
+						log.details = error if error else "Finished successfully"
+						log.insert(ignore_permissions=True)
+						
+					frappe.db.commit()
+				
+			if stream_msg_ids:
+				for s_name, m_ids in stream_msg_ids.items():
+					cache.xack(s_name, "telemetry_consumer_group", *m_ids)
+
+		except Exception:
+			frappe.db.rollback()
+			frappe.logger("controller").error("Telemetry loop error", exc_info=True)
+			time.sleep(5)
+
+def sweep_lost_jobs():
+	"""
+	The Sweeper: Scheduled task running every scheduler tick.
+	Finds FS Jobs queued longer than the tick interval and re-pushes to Redis ingestion stream.
+	"""
+	if not frappe.db.exists("DocType", "FS Job"):
+		return
+		
+	lost_jobs = frappe.db.sql("""
+		SELECT name, queue FROM `tabFS Job` 
+		WHERE status='Queued'
+	""", as_dict=True)
+	
+	cache = frappe.cache()
+	for job_info in lost_jobs:
+		lock_key = f"fs:started:{job_info.name}"
+		if cache.get(lock_key):
+			continue
+			
+		queue_name = job_info.get("queue")
+		if queue_name not in ("low", "medium", "high"):
+			continue
+
+		job = frappe.get_doc("FS Job", job_info.name)
+		job_payload = job.as_dict()
+		job_payload["site"] = frappe.local.site
+		msg = {"payload": json.dumps(job_payload, default=str)}
+		
+		try:
+			zscore = cache.execute_command('ZSCORE', f"fs:scheduled:{queue_name}", json.dumps(msg))
+			if zscore is not None:
+				continue
+		except Exception:
+			pass
+			
+		cache.xadd(f"fs:queue:{queue_name}", msg)
+
+def _get_controller_lock_file():
+	return os.path.abspath(os.path.join(get_bench_path(), "config", "controller_process"))
 
 def create_job_log(job_type: str, status: str, details: str = None):
 	"""Helper function to insert a Controller Job Log"""
@@ -256,7 +186,7 @@ def clear_old_logs():
 	"""
 	try:
 		frappe.db.sql("""
-			DELETE FROM `tabController Job Log`
+			DELETE FROM `tabFS Job Log`
 			WHERE creation < DATE_SUB(NOW(), INTERVAL 30 DAY)
 		""")
 		frappe.db.commit()

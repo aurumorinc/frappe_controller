@@ -17,11 +17,12 @@
   "server_script",
   "create_log",
   "rate_limit_section",
-  "max_calls_per_minute",
-  "concurrency_limit",
   "timeout",
   "status_section",
-  "last_execution"
+  "last_execution",
+  "rate_limit_per_minute",
+  "rate_limit_per_hour",
+  "rate_limit_per_day"
  ],
  "fields": [
   {
@@ -51,16 +52,6 @@
    "read_only": 1
   },
   {
-   "fieldname": "max_calls_per_minute",
-   "fieldtype": "Int",
-   "label": "Max Calls Per Minute"
-  },
-  {
-   "fieldname": "concurrency_limit",
-   "fieldtype": "Int",
-   "label": "Concurrency Limit"
-  },
-  {
    "fieldname": "server_script",
    "fieldtype": "Link",
    "label": "Server Script",
@@ -72,6 +63,21 @@
    "fieldname": "rate_limit_section",
    "fieldtype": "Section Break",
    "label": "Rate Limit"
+  },
+  {
+   "fieldname": "rate_limit_per_minute",
+   "fieldtype": "Int",
+   "label": "Rate Limit Per Minute"
+  },
+  {
+   "fieldname": "rate_limit_per_hour",
+   "fieldtype": "Int",
+   "label": "Rate Limit Per Hour"
+  },
+  {
+   "fieldname": "rate_limit_per_day",
+   "fieldtype": "Int",
+   "label": "Rate Limit Per Day"
   },
   {
    "fieldname": "status_section",

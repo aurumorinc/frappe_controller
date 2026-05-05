@@ -20,32 +20,34 @@ class ControllerJobType(Document):
 		method: DF.Data
 		server_script: DF.Link | None
 		stopped: DF.Check
-		max_calls_per_minute: DF.Int
-		concurrency_limit: DF.Int
+		rate_limit_per_minute: DF.Int
+		rate_limit_per_hour: DF.Int
+		rate_limit_per_day: DF.Int
 	# end: auto-generated types
 
-	def is_allowed_by_rate_limit(self) -> bool:
-		if not self.max_calls_per_minute:
-			return True
-		
-		# Simple atomic rate limiting using Redis
+	def on_update(self):
 		cache = frappe.cache()
-		key = f"controller_job_rate_limit:{self.name}"
+		key = f"fs:{self.method}:config"
 		
-		# incrby returns the value after increment
-		new_count = cache.incrby(key, 1)
+		# Clear existing config
+		cache.delete_value(key)
 		
-		if int(new_count) == 1:
-			cache.expire(key, 60)
-		
-		if int(new_count) > self.max_calls_per_minute:
-			return False
+		limits = {}
+		if self.rate_limit_per_minute:
+			limits["rate_limit_per_minute"] = str(self.rate_limit_per_minute)
+		if self.rate_limit_per_hour:
+			limits["rate_limit_per_hour"] = str(self.rate_limit_per_hour)
+		if self.rate_limit_per_day:
+			limits["rate_limit_per_day"] = str(self.rate_limit_per_day)
+		if self.timeout:
+			limits["timeout"] = str(self.timeout)
 			
-		return True
+		for k, v in limits.items():
+			cache.hset(key, k, v)
 
 def sync_jobs(hooks: list | dict = None):
 	frappe.reload_doc("controller", "doctype", "controller_job_type")
-	frappe.reload_doc("controller", "doctype", "controller_job")
+	frappe.reload_doc("controller", "doctype", "fs_job")
 	
 	raw_hooks = hooks if hooks is not None else frappe.get_hooks("controller_events")
 	
@@ -63,7 +65,7 @@ def sync_jobs(hooks: list | dict = None):
 			defined_methods.append(hook_entry)
 			insert_single_event(hook_entry)
 		elif isinstance(hook_entry, dict):
-			# Case 1: {"method": "path", "max_calls_per_minute": 10}
+			# Case 1: {"method": "path", "rate_limit_per_minute": 10}
 			if "method" in hook_entry and isinstance(hook_entry["method"], str):
 				method = hook_entry["method"]
 				defined_methods.append(method)
@@ -115,17 +117,24 @@ def insert_single_event(method: str, config: dict = None):
 		return val
 
 	# Safely update numeric fields
-	max_calls = get_val("max_calls_per_minute")
-	if max_calls is not None:
+	rate_limit_per_minute = get_val("rate_limit_per_minute")
+	if rate_limit_per_minute is not None:
 		try:
-			doc.max_calls_per_minute = int(max_calls)
+			doc.rate_limit_per_minute = int(rate_limit_per_minute)
 		except (ValueError, TypeError):
 			pass
 			
-	concurrency = get_val("concurrency_limit")
-	if concurrency is not None:
+	rate_limit_per_hour = get_val("rate_limit_per_hour")
+	if rate_limit_per_hour is not None:
 		try:
-			doc.concurrency_limit = int(concurrency)
+			doc.rate_limit_per_hour = int(rate_limit_per_hour)
+		except (ValueError, TypeError):
+			pass
+
+	rate_limit_per_day = get_val("rate_limit_per_day")
+	if rate_limit_per_day is not None:
+		try:
+			doc.rate_limit_per_day = int(rate_limit_per_day)
 		except (ValueError, TypeError):
 			pass
 
