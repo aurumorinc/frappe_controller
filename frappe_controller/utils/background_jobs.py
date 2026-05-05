@@ -150,10 +150,8 @@ def start_worker(queue="default"):
 
     async def handle_ingestion(msg: Dict[str, Any]):
         try:
-            print(f"DEBUG: INGESTED MSG: {msg}", flush=True)
             payload_str = msg.get("payload")
             if not payload_str:
-                print("DEBUG: NO PAYLOAD STR", flush=True)
                 return
                 
             if isinstance(payload_str, bytes):
@@ -162,14 +160,11 @@ def start_worker(queue="default"):
             import json
             try:
                 payload = json.loads(payload_str)
-                print(f"DEBUG: PARSED PAYLOAD: {payload}", flush=True)
             except Exception as e:
-                print(f"DEBUG: JSON PARSE ERROR: {e}", flush=True)
                 return
                 
             job_id = payload.get("name")
             if not job_id:
-                print("DEBUG: NO JOB ID", flush=True)
                 return
                 
             try:
@@ -180,7 +175,6 @@ def start_worker(queue="default"):
                 lock_key = f"fs:started:{job_id}"
                 is_locked = await redis_client.setnx(lock_key, "1")
                 if not is_locked:
-                    print(f"DEBUG: LOCKED {job_id}", flush=True)
                     return
 
                 await redis_client.expire(lock_key, timeout + 60)
@@ -190,7 +184,6 @@ def start_worker(queue="default"):
                 delay_until = await check_rate_limits(method_path)
                 
                 if delay_until > 0:
-                    print(f"DEBUG: RATE LIMITED {job_id} until {delay_until}", flush=True)
                     await redis_client.zadd(DELAYED_JOBS_ZSET, {json.dumps(msg): delay_until})
                     await redis_client.delete(lock_key)
                     return
@@ -206,9 +199,8 @@ def start_worker(queue="default"):
                         frappe.init(site=site_name, force=True)
                         frappe.connect()
                         try:
-                            print(f"DEBUG: CURRENT DB: {frappe.db.cur_db_name}, CONF DB: {frappe.conf.db_name}", flush=True)
-                            print(f"DEBUG: INSTALLED APPS IN THREAD for site {site_name}: {frappe.get_installed_apps()}", flush=True)
-                            frappe.get_attr(method_path)(**args)
+                            func = frappe.get_attr(method_path)
+                            func(**args)
                             frappe.db.commit()
                         except Exception:
                             frappe.db.rollback()
@@ -234,7 +226,6 @@ def start_worker(queue="default"):
                 time_taken = time.time() - start_time
                 
                 telemetry_stream = FINISHED_STREAM if status == "Finished" else FAILED_STREAM
-                print(f"DEBUG: PUBLISHING {job_id} {status} ERROR: {error}", flush=True)
                 await redis_client.xadd(telemetry_stream, {
                     "payload": json.dumps({
                         "job_id": job_id,
@@ -249,9 +240,6 @@ def start_worker(queue="default"):
                 if getattr(frappe.local, "site", None):
                     frappe.db.rollback()
         except Exception as outer_e:
-            print(f"DEBUG: CRITICAL ERROR IN HANDLER: {str(outer_e)}", flush=True)
-            import traceback
-            print(traceback.format_exc(), flush=True)
             raise
 
     @app.on_startup
