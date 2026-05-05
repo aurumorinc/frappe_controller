@@ -50,6 +50,7 @@ def start_controller() -> NoReturn:
 
 	while True:
 		try:
+			frappe.logger("controller").debug("Waiting for telemetry messages...")
 			messages = cache.xreadgroup(
 				"telemetry_consumer_group",
 				"consumer-1",
@@ -136,9 +137,15 @@ def start_controller() -> NoReturn:
 				for s_name, m_ids in stream_msg_ids.items():
 					cache.xack(s_name, "telemetry_consumer_group", *m_ids)
 
-		except Exception:
+		except Exception as e:
 			frappe.db.rollback()
 			frappe.logger("controller").error("Telemetry loop error", exc_info=True)
+			if "NOGROUP" in str(e):
+				for stream in ["fs:started:low", "fs:started:medium", "fs:started:high", "fs:finished:low", "fs:failed:low", "fs:finished:medium", "fs:failed:medium", "fs:finished:high", "fs:failed:high"]:
+					try:
+						cache.xgroup_create(stream, "telemetry_consumer_group", id="0", mkstream=True)
+					except Exception:
+						pass
 			time.sleep(5)
 
 def sweep_lost_jobs():
