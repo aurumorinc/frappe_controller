@@ -40,7 +40,7 @@ def start_controller() -> NoReturn:
 	
 	cache = frappe.cache()
 	try:
-		for stream in ["fs:finished:low", "fs:failed:low", "fs:finished:medium", "fs:failed:medium", "fs:finished:high", "fs:failed:high"]:
+		for stream in ["fs:started:low", "fs:started:medium", "fs:started:high", "fs:finished:low", "fs:failed:low", "fs:finished:medium", "fs:failed:medium", "fs:finished:high", "fs:failed:high"]:
 			try:
 				cache.xgroup_create(stream, "telemetry_consumer_group", id="0", mkstream=True)
 			except Exception:
@@ -54,6 +54,7 @@ def start_controller() -> NoReturn:
 				"telemetry_consumer_group",
 				"consumer-1",
 				{
+					"fs:started:low": ">", "fs:started:medium": ">", "fs:started:high": ">",
 					"fs:finished:low": ">", "fs:failed:low": ">",
 					"fs:finished:medium": ">", "fs:failed:medium": ">",
 					"fs:finished:high": ">", "fs:failed:high": ">"
@@ -90,6 +91,8 @@ def start_controller() -> NoReturn:
 					status = payload.get("status")
 					error = payload.get("error")
 					job_site = payload.get("site")
+					started_at = payload.get("started_at")
+					time_taken = payload.get("time_taken", 0)
 					
 					# Ensure payload strings are parsed correctly if they are bytes
 					if isinstance(job_id, bytes): job_id = job_id.decode('utf-8')
@@ -105,11 +108,18 @@ def start_controller() -> NoReturn:
 						frappe.init(site=job_site, force=True)
 						frappe.connect()
 						
-					frappe.db.sql("""
-						UPDATE `tabFS Job`
-						SET status = %s, exc_info = %s, ended_at = %s
-						WHERE name = %s
-					""", (status, error, now_datetime(), job_id))
+					if status == "Started":
+						frappe.db.sql("""
+							UPDATE `tabFS Job`
+							SET status = %s, started_at = %s
+							WHERE name = %s
+						""", (status, started_at, job_id))
+					else:
+						frappe.db.sql("""
+							UPDATE `tabFS Job`
+							SET status = %s, exc_info = %s, ended_at = %s, time_taken = %s
+							WHERE name = %s
+						""", (status, error, now_datetime(), time_taken, job_id))
 					
 					# Check if job type wants log
 					job_type_name = frappe.db.get_value("FS Job", job_id, "job_type")

@@ -11,7 +11,6 @@
   "job_type",
   "job_name",
   "queue",
-  "timeout",
   "column_break_5",
   "arguments",
   "job_status_section",
@@ -64,11 +63,6 @@
    "fieldtype": "Code",
    "label": "Arguments",
    "read_only": 1
-  },
-  {
-   "fieldname": "timeout",
-   "fieldtype": "Duration",
-   "label": "Timeout"
   },
   {
    "fieldname": "time_taken",

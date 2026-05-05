@@ -32,10 +32,11 @@ def enqueue(method, queue="low", timeout=None, is_async=True, **kwargs):
 		"job_name": method,
 		"queue": queue,
 		"status": "Queued",
-		"arguments": json.dumps(kwargs, default=str),
-		"timeout": timeout
+		"arguments": json.dumps(kwargs, default=str)
 	})
 	job.insert(ignore_permissions=True)
+	job.db_set("job_id", job.name)
+	job.job_id = job.name
 	
 	job_payload = job.as_dict()
 	job_payload["site"] = frappe.local.site
@@ -170,14 +171,13 @@ def start_worker(queue="default"):
             try:
                 method_path = payload.get("job_name")
                 args_str = payload.get("arguments")
-                timeout = payload.get("timeout") or 3600
                 
                 lock_key = f"fs:started:{job_id}"
                 is_locked = await redis_client.setnx(lock_key, "1")
                 if not is_locked:
                     return
 
-                await redis_client.expire(lock_key, timeout + 60)
+                await redis_client.expire(lock_key, 3660)
                 
                 args = json.loads(args_str) if args_str else {}
                 
@@ -194,6 +194,16 @@ def start_worker(queue="default"):
                 if not site_name:
                     site_name = getattr(frappe.local, "site", None) or frappe.utils.get_sites()[0]
                 
+                STARTED_STREAM = f"fs:started:{queue}"
+                await redis_client.xadd(STARTED_STREAM, {
+                    "payload": json.dumps({
+                        "job_id": job_id,
+                        "status": "Started",
+                        "started_at": str(frappe.utils.now_datetime()),
+                        "site": site_name
+                    }, default=str)
+                })
+
                 async def run_frappe():
                     def execute():
                         frappe.init(site=site_name, force=True)
@@ -208,17 +218,13 @@ def start_worker(queue="default"):
                         finally:
                             frappe.destroy()
                     
-                    with anyio.fail_after(timeout):
-                        await anyio.to_thread.run_sync(execute)
+                    await anyio.to_thread.run_sync(execute)
                         
                 error = None
                 status = "Finished"
                 
                 try:
                     await run_frappe()
-                except TimeoutError:
-                    status = "Failed"
-                    error = "Job exceeded timeout"
                 except Exception as e:
                     status = "Failed"
                     error = str(e)
